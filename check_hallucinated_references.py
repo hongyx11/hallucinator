@@ -51,9 +51,9 @@ def print_hallucinated_reference(title, error_type, source=None, ref_authors=Non
     if error_type == "not_found":
         print(f"{Colors.RED}Status:{Colors.RESET} Reference not found in any database")
         if searched_openalex:
-            print(f"{Colors.DIM}Searched: OpenAlex, DBLP, arXiv, CrossRef{Colors.RESET}")
+            print(f"{Colors.DIM}Searched: OpenAlex, CrossRef, arXiv, DBLP{Colors.RESET}")
         else:
-            print(f"{Colors.DIM}Searched: DBLP, arXiv, CrossRef{Colors.RESET}")
+            print(f"{Colors.DIM}Searched: CrossRef, arXiv, DBLP{Colors.RESET}")
     elif error_type == "author_mismatch":
         print(f"{Colors.YELLOW}Status:{Colors.RESET} Title found on {source} but authors don't match")
         print()
@@ -262,10 +262,19 @@ def clean_title(title, from_quotes=False):
     if from_quotes:
         return title.strip()
 
-    # For non-quoted titles, truncate at first period
-    period_pos = title.find('.')
-    if period_pos > 0:
-        title = title[:period_pos]
+    # For non-quoted titles, truncate at first sentence-ending period
+    # Skip periods that are part of abbreviations (e.g., "U.S." has short segments)
+    for match in re.finditer(r'\.', title):
+        pos = match.start()
+        # Find start of segment (after last period or space, whichever is later)
+        last_period = title.rfind('.', 0, pos)
+        last_space = title.rfind(' ', 0, pos)
+        segment_start = max(last_period + 1, last_space + 1, 0)
+        segment = title[segment_start:pos]
+        # If segment > 2 chars, it's likely a real sentence end, not an abbreviation
+        if len(segment) > 2:
+            title = title[:pos]
+            break
 
     # Also handle "? In" pattern for question-ending titles
     in_venue_match = re.search(r'\?\s*[Ii]n\s+(?:[A-Z]|[12]\d{3}\s)', title)
@@ -334,6 +343,7 @@ def extract_title_from_reference(ref_text):
                     r'\.\s*[Ii]n\s+',           # ". In "
                     r'\.\s*(?:Proc|IEEE|ACM|USENIX|NDSS|CCS|AAAI|WWW|CHI|arXiv)',
                     r',\s*[Ii]n\s+',            # ", in "
+                    r'\.\s*\((?:19|20)\d{2}\)', # ". (2022)" style venue year
                     r'[,\.]\s*(?:19|20)\d{2}',  # year
                     r'\s+(?:19|20)\d{2}\.',     # year at end
                 ]
@@ -650,7 +660,13 @@ def main(pdf_path, sleep_time=1.0, openalex_key=None):
     mismatched = 0
 
     for i, (title, ref_authors) in enumerate(refs):
-        # If OpenAlex API key provided, query OpenAlex first
+        # Query services in order of rate limit generosity:
+        # 1. OpenAlex (if API key provided) - most generous
+        # 2. CrossRef - generous, large coverage
+        # 3. arXiv - moderate limits
+        # 4. DBLP - most aggressive rate limiting, query last
+
+        # 1. OpenAlex (if API key provided)
         if openalex_key:
             found_title, found_authors = query_openalex(title, openalex_key)
             if found_title:
@@ -664,20 +680,20 @@ def main(pdf_path, sleep_time=1.0, openalex_key=None):
                     mismatched += 1
                 continue
 
-        # Sleep before DBLP query to avoid rate limiting
-        time.sleep(sleep_time)
-        found_title, found_authors = query_dblp(title)
+        # 2. CrossRef
+        found_title, found_authors = query_crossref(title)
         if found_title:
             if validate_authors(ref_authors, found_authors):
                 found += 1
             else:
                 print_hallucinated_reference(
-                    title, "author_mismatch", source="DBLP",
+                    title, "author_mismatch", source="CrossRef",
                     ref_authors=ref_authors, found_authors=found_authors
                 )
                 mismatched += 1
             continue
 
+        # 3. arXiv
         found_title, found_authors = query_arxiv(title)
         if found_title:
             if validate_authors(ref_authors, found_authors):
@@ -690,13 +706,15 @@ def main(pdf_path, sleep_time=1.0, openalex_key=None):
                 mismatched += 1
             continue
 
-        found_title, found_authors = query_crossref(title)
+        # 4. DBLP - sleep before to avoid rate limiting
+        time.sleep(sleep_time)
+        found_title, found_authors = query_dblp(title)
         if found_title:
             if validate_authors(ref_authors, found_authors):
                 found += 1
             else:
                 print_hallucinated_reference(
-                    title, "author_mismatch", source="CrossRef",
+                    title, "author_mismatch", source="DBLP",
                     ref_authors=ref_authors, found_authors=found_authors
                 )
                 mismatched += 1
