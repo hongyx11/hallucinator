@@ -310,19 +310,45 @@ def extract_title_from_reference(ref_text):
     ref_text = re.sub(r'(\w)- (\w)', r'\1\2', ref_text)
     ref_text = re.sub(r'\s+', ' ', ref_text).strip()
 
-    # === Format 1: IEEE - Quoted titles ===
+    # === Format 1: IEEE/USENIX - Quoted titles or titles with quoted portions ===
+    # Handles: "Full Title" or "Quoted part": Subtitle
     quote_patterns = [
-        r'["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]',  # Smart quotes
+        r'["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]',  # Smart quotes (any combo)
         r'"([^"]+)"',  # Regular quotes
     ]
 
     for pattern in quote_patterns:
         match = re.search(pattern, ref_text)
         if match:
-            title = match.group(1).strip()
-            title = re.sub(r',\s*$', '', title)
-            if len(title.split()) >= 3:
-                return title, True  # from_quotes=True
+            quoted_part = match.group(1).strip()
+            after_quote = ref_text[match.end():].strip()
+
+            # Check if there's a subtitle after the quote (starts with : or -)
+            if after_quote and after_quote[0] in ':-':
+                subtitle_text = after_quote[1:].strip()
+                # Find where subtitle ends at venue/year markers
+                end_patterns = [
+                    r'\.\s*[Ii]n\s+',           # ". In "
+                    r'\.\s*(?:Proc|IEEE|ACM|USENIX|NDSS|CCS|AAAI|WWW|CHI|arXiv)',
+                    r',\s*[Ii]n\s+',            # ", in "
+                    r'[,\.]\s*(?:19|20)\d{2}',  # year
+                    r'\s+(?:19|20)\d{2}\.',     # year at end
+                ]
+                subtitle_end = len(subtitle_text)
+                for ep in end_patterns:
+                    m = re.search(ep, subtitle_text)
+                    if m:
+                        subtitle_end = min(subtitle_end, m.start())
+
+                subtitle = subtitle_text[:subtitle_end].strip()
+                subtitle = re.sub(r'[.,;:]+$', '', subtitle)
+                if subtitle and len(subtitle.split()) >= 2:
+                    title = f'{quoted_part}: {subtitle}'
+                    return title, True
+
+            # No subtitle - just use quoted part if long enough
+            if len(quoted_part.split()) >= 3:
+                return quoted_part, True
 
     # === Format 2: ACM - "Authors. Year. Title. In Venue" ===
     # Pattern: ". YYYY. Title-text. In "
@@ -467,9 +493,10 @@ def extract_references_with_titles_and_authors(pdf_path):
 STOP_WORDS = {'a', 'an', 'the', 'of', 'and', 'or', 'for', 'to', 'in', 'on', 'with', 'by'}
 
 def get_query_words(title, n=6):
-    """Extract n significant words from title for query, skipping stop words."""
+    """Extract n significant words from title for query, skipping stop words and short words."""
     all_words = re.findall(r'[a-zA-Z0-9]+', title)
-    significant = [w for w in all_words if w.lower() not in STOP_WORDS]
+    # Skip stop words and words shorter than 3 characters (e.g., "s" from "Twitter's")
+    significant = [w for w in all_words if w.lower() not in STOP_WORDS and len(w) >= 3]
     return significant[:n] if len(significant) >= 3 else all_words[:n]
 
 def query_dblp(title):
@@ -584,17 +611,17 @@ def validate_authors(ref_authors, found_authors):
     found_set = set(normalize_author(a) for a in found_authors)
     return bool(ref_set & found_set)
 
-def main(pdf_path):
+def main(pdf_path, sleep_time=1.0):
     refs = extract_references_with_titles_and_authors(pdf_path)
 #    print(f"Found {len(refs)} references.")
-    print("Analyzing paper %s"%(sys.argv[1].split("/")[-1]))
+    print("Analyzing paper %s"%(pdf_path.split("/")[-1]))
 
     found = 0
     failed = 0
     mismatched = 0
 
     for i, (title, ref_authors) in enumerate(refs):
-        time.sleep(1)
+        time.sleep(sleep_time)
         found_title, found_authors = query_dblp(title)
         if found_title:
             if validate_authors(ref_authors, found_authors):
@@ -655,13 +682,34 @@ def main(pdf_path):
 #            f.write("%s,%s\n"%(sys.argv[1].split("/")[-1],mismatched))
 
 if __name__ == "__main__":
+    import os
+
     # Check for --no-color flag
     if '--no-color' in sys.argv:
         Colors.disable()
         sys.argv.remove('--no-color')
 
+    # Check for --sleep flag
+    sleep_time = 1.0
+    for i, arg in enumerate(sys.argv):
+        if arg.startswith('--sleep='):
+            sleep_time = float(arg.split('=')[1])
+            sys.argv.remove(arg)
+            break
+        elif arg == '--sleep' and i + 1 < len(sys.argv):
+            sleep_time = float(sys.argv[i + 1])
+            sys.argv.remove(sys.argv[i + 1])
+            sys.argv.remove(arg)
+            break
+
     if len(sys.argv) < 2:
-        print("Usage: check_hallucinated_references.py [--no-color] <path_to_pdf>")
+        print("Usage: check_hallucinated_references.py [--no-color] [--sleep=SECONDS] <path_to_pdf>")
         sys.exit(1)
-    main(sys.argv[1])
+
+    pdf_path = sys.argv[1]
+    if not os.path.exists(pdf_path):
+        print(f"Error: File '{pdf_path}' not found")
+        sys.exit(1)
+
+    main(pdf_path, sleep_time=sleep_time)
 
