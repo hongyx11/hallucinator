@@ -2,6 +2,8 @@
 
 A tool to detect potentially hallucinated or fabricated references in academic PDF papers. It extracts references from PDFs and validates them against academic databases (DBLP, arXiv, CrossRef).
 
+Created by Gianluca Stringhini with the help of Claude Code and ChatGPT
+
 ## Features
 
 - Pure Python PDF reference extraction using PyMuPDF (no external services required)
