@@ -10,6 +10,7 @@ from check_hallucinated_references import (
     query_dblp,
     query_openalex,
     query_openreview,
+    query_semantic_scholar,
     validate_authors,
 )
 
@@ -40,74 +41,61 @@ def analyze_pdf(pdf_path, openalex_key=None):
             'found_authors': [],
         }
 
+        # Helper: check authors (skip validation if no ref_authors)
+        def check_and_set_result(source, found_authors):
+            if not ref_authors or validate_authors(ref_authors, found_authors):
+                result['status'] = 'verified'
+                result['source'] = source
+            else:
+                result['status'] = 'author_mismatch'
+                result['error_type'] = 'author_mismatch'
+                result['source'] = source
+                result['found_authors'] = found_authors
+
         # 1. OpenAlex (if API key provided)
+        # Note: OpenAlex sometimes returns incorrect authors, so on mismatch we check other sources
         if openalex_key:
             found_title, found_authors = query_openalex(title, openalex_key)
             if found_title and found_authors:
-                if validate_authors(ref_authors, found_authors):
+                if not ref_authors or validate_authors(ref_authors, found_authors):
                     result['status'] = 'verified'
                     result['source'] = 'OpenAlex'
-                else:
-                    result['status'] = 'author_mismatch'
-                    result['error_type'] = 'author_mismatch'
-                    result['source'] = 'OpenAlex'
-                    result['found_authors'] = found_authors
-                results.append(result)
-                continue
+                    results.append(result)
+                    continue
+                # Author mismatch on OpenAlex - continue to check other sources
 
         # 2. CrossRef
         found_title, found_authors = query_crossref(title)
         if found_title:
-            if validate_authors(ref_authors, found_authors):
-                result['status'] = 'verified'
-                result['source'] = 'CrossRef'
-            else:
-                result['status'] = 'author_mismatch'
-                result['error_type'] = 'author_mismatch'
-                result['source'] = 'CrossRef'
-                result['found_authors'] = found_authors
+            check_and_set_result('CrossRef', found_authors)
             results.append(result)
             continue
 
         # 3. arXiv
         found_title, found_authors = query_arxiv(title)
         if found_title:
-            if validate_authors(ref_authors, found_authors):
-                result['status'] = 'verified'
-                result['source'] = 'arXiv'
-            else:
-                result['status'] = 'author_mismatch'
-                result['error_type'] = 'author_mismatch'
-                result['source'] = 'arXiv'
-                result['found_authors'] = found_authors
+            check_and_set_result('arXiv', found_authors)
             results.append(result)
             continue
 
         # 4. DBLP
         found_title, found_authors = query_dblp(title)
         if found_title:
-            if validate_authors(ref_authors, found_authors):
-                result['status'] = 'verified'
-                result['source'] = 'DBLP'
-            else:
-                result['status'] = 'author_mismatch'
-                result['error_type'] = 'author_mismatch'
-                result['source'] = 'DBLP'
-                result['found_authors'] = found_authors
+            check_and_set_result('DBLP', found_authors)
             results.append(result)
             continue
 
         # 5. OpenReview (last resort for conference papers)
         found_title, found_authors = query_openreview(title)
         if found_title:
-            if validate_authors(ref_authors, found_authors):
-                result['status'] = 'verified'
-                result['source'] = 'OpenReview'
-            else:
-                result['status'] = 'author_mismatch'
-                result['error_type'] = 'author_mismatch'
-                result['source'] = 'OpenReview'
-                result['found_authors'] = found_authors
+            check_and_set_result('OpenReview', found_authors)
+            results.append(result)
+            continue
+
+        # 6. Semantic Scholar (aggregates Academia.edu, SSRN, PubMed, etc.)
+        found_title, found_authors = query_semantic_scholar(title)
+        if found_title:
+            check_and_set_result('Semantic Scholar', found_authors)
             results.append(result)
             continue
 
@@ -150,7 +138,7 @@ def analyze():
         verified = sum(1 for r in results if r['status'] == 'verified')
         not_found = sum(1 for r in results if r['status'] == 'not_found')
         mismatched = sum(1 for r in results if r['status'] == 'author_mismatch')
-        total_skipped = skip_stats['skipped_url'] + skip_stats['skipped_short_title'] + skip_stats['skipped_no_authors']
+        total_skipped = skip_stats['skipped_url'] + skip_stats['skipped_short_title']
 
         return jsonify({
             'success': True,
@@ -163,7 +151,7 @@ def analyze():
                 'skipped': total_skipped,
                 'skipped_url': skip_stats['skipped_url'],
                 'skipped_short_title': skip_stats['skipped_short_title'],
-                'skipped_no_authors': skip_stats['skipped_no_authors'],
+                'title_only': skip_stats['skipped_no_authors'],
             },
             'results': results,
         })

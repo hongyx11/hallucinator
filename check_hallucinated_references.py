@@ -52,9 +52,9 @@ def print_hallucinated_reference(title, error_type, source=None, ref_authors=Non
     if error_type == "not_found":
         print(f"{Colors.RED}Status:{Colors.RESET} Reference not found in any database")
         if searched_openalex:
-            print(f"{Colors.DIM}Searched: OpenAlex, CrossRef, arXiv, DBLP, OpenReview{Colors.RESET}")
+            print(f"{Colors.DIM}Searched: OpenAlex, CrossRef, arXiv, DBLP, OpenReview, Semantic Scholar{Colors.RESET}")
         else:
-            print(f"{Colors.DIM}Searched: CrossRef, arXiv, DBLP, OpenReview{Colors.RESET}")
+            print(f"{Colors.DIM}Searched: CrossRef, arXiv, DBLP, OpenReview, Semantic Scholar{Colors.RESET}")
     elif error_type == "author_mismatch":
         print(f"{Colors.YELLOW}Status:{Colors.RESET} Title found on {source} but authors don't match")
         print()
@@ -609,15 +609,14 @@ def extract_references_with_titles_and_authors(pdf_path, return_stats=False):
             if previous_authors:
                 authors = previous_authors
             else:
-                stats['skipped_no_authors'] += 1
-                continue  # No previous authors to use
+                authors = []  # No previous authors to use
 
         if not authors:
-            stats['skipped_no_authors'] += 1
-            continue
+            stats['skipped_no_authors'] += 1  # Track refs with no authors (but still check them)
 
         # Update previous_authors for potential next em-dash reference
-        previous_authors = authors
+        if authors:
+            previous_authors = authors
 
         references.append((title, authors))
 
@@ -788,6 +787,29 @@ def query_openreview(title):
         print(f"[Error] OpenReview search failed: {e}")
     return None, []
 
+def query_semantic_scholar(title):
+    """Query Semantic Scholar API for paper information.
+
+    Semantic Scholar aggregates papers from many sources including
+    Academia.edu, SSRN, PubMed, and institutional repositories.
+    """
+    words = get_query_words(title, 6)
+    query = ' '.join(words)
+    url = f"https://api.semanticscholar.org/graph/v1/paper/search?query={urllib.parse.quote(query)}&limit=10&fields=title,authors"
+    try:
+        response = requests.get(url, headers={"User-Agent": "Academic Reference Parser"})
+        if response.status_code != 200:
+            return None, []
+        results = response.json().get("data", [])
+        for item in results:
+            found_title = item.get("title", "")
+            if found_title and fuzz.ratio(normalize_title(title), normalize_title(found_title)) >= 95:
+                authors = [a.get("name", "") for a in item.get("authors", []) if a.get("name")]
+                return found_title, authors
+    except Exception as e:
+        print(f"[Error] Semantic Scholar search failed: {e}")
+    return None, []
+
 def validate_authors(ref_authors, found_authors):
     def normalize_author(name):
         parts = name.split()
@@ -828,71 +850,59 @@ def main(pdf_path, sleep_time=1.0, openalex_key=None):
         # 3. arXiv - moderate limits
         # 4. DBLP - most aggressive rate limiting, query last
 
+        # Helper: check if authors match (skip validation if no ref_authors)
+        def check_authors(ref_authors, found_authors, source):
+            nonlocal found, mismatched
+            if not ref_authors or validate_authors(ref_authors, found_authors):
+                found += 1
+                return True
+            else:
+                print_hallucinated_reference(
+                    title, "author_mismatch", source=source,
+                    ref_authors=ref_authors, found_authors=found_authors
+                )
+                mismatched += 1
+                return True  # Still handled, continue to next ref
+
         # 1. OpenAlex (if API key provided)
+        # Note: OpenAlex sometimes returns incorrect authors, so on mismatch we check other sources
         if openalex_key:
             found_title, found_authors = query_openalex(title, openalex_key)
-            if found_title and found_authors:  # Skip to next source if authors empty
-                if validate_authors(ref_authors, found_authors):
+            if found_title and found_authors:
+                if not ref_authors or validate_authors(ref_authors, found_authors):
                     found += 1
-                else:
-                    print_hallucinated_reference(
-                        title, "author_mismatch", source="OpenAlex",
-                        ref_authors=ref_authors, found_authors=found_authors
-                    )
-                    mismatched += 1
-                continue
+                    continue
+                # Author mismatch on OpenAlex - continue to check other sources
 
         # 2. CrossRef
         found_title, found_authors = query_crossref(title)
         if found_title:
-            if validate_authors(ref_authors, found_authors):
-                found += 1
-            else:
-                print_hallucinated_reference(
-                    title, "author_mismatch", source="CrossRef",
-                    ref_authors=ref_authors, found_authors=found_authors
-                )
-                mismatched += 1
+            check_authors(ref_authors, found_authors, "CrossRef")
             continue
 
         # 3. arXiv
         found_title, found_authors = query_arxiv(title)
         if found_title:
-            if validate_authors(ref_authors, found_authors):
-                found += 1
-            else:
-                print_hallucinated_reference(
-                    title, "author_mismatch", source="arXiv",
-                    ref_authors=ref_authors, found_authors=found_authors
-                )
-                mismatched += 1
+            check_authors(ref_authors, found_authors, "arXiv")
             continue
 
         # 4. DBLP - sleep before to avoid rate limiting
         time.sleep(sleep_time)
         found_title, found_authors = query_dblp(title)
         if found_title:
-            if validate_authors(ref_authors, found_authors):
-                found += 1
-            else:
-                print_hallucinated_reference(
-                    title, "author_mismatch", source="DBLP",
-                    ref_authors=ref_authors, found_authors=found_authors
-                )
-                mismatched += 1
+            check_authors(ref_authors, found_authors, "DBLP")
             continue
 
         # 5. OpenReview (last resort for conference papers)
         found_title, found_authors = query_openreview(title)
         if found_title:
-            if validate_authors(ref_authors, found_authors):
-                found += 1
-            else:
-                print_hallucinated_reference(
-                    title, "author_mismatch", source="OpenReview",
-                    ref_authors=ref_authors, found_authors=found_authors
-                )
-                mismatched += 1
+            check_authors(ref_authors, found_authors, "OpenReview")
+            continue
+
+        # 6. Semantic Scholar (aggregates Academia.edu, SSRN, PubMed, etc.)
+        found_title, found_authors = query_semantic_scholar(title)
+        if found_title:
+            check_authors(ref_authors, found_authors, "Semantic Scholar")
             continue
 
         print_hallucinated_reference(title, "not_found", searched_openalex=bool(openalex_key))
@@ -903,11 +913,13 @@ def main(pdf_path, sleep_time=1.0, openalex_key=None):
     print(f"{Colors.BOLD}{'='*60}{Colors.RESET}")
     print(f"{Colors.BOLD}SUMMARY{Colors.RESET}")
     print(f"{Colors.BOLD}{'='*60}{Colors.RESET}")
-    total_skipped = skip_stats['skipped_url'] + skip_stats['skipped_short_title'] + skip_stats['skipped_no_authors']
+    total_skipped = skip_stats['skipped_url'] + skip_stats['skipped_short_title']
     print(f"  Total references found: {skip_stats['total_raw']}")
     print(f"  References analyzed: {len(refs)}")
     if total_skipped > 0:
-        print(f"  {Colors.DIM}Skipped: {total_skipped} (URLs: {skip_stats['skipped_url']}, short titles: {skip_stats['skipped_short_title']}, no authors: {skip_stats['skipped_no_authors']}){Colors.RESET}")
+        print(f"  {Colors.DIM}Skipped: {total_skipped} (URLs: {skip_stats['skipped_url']}, short titles: {skip_stats['skipped_short_title']}){Colors.RESET}")
+    if skip_stats['skipped_no_authors'] > 0:
+        print(f"  {Colors.DIM}Title-only (no authors extracted): {skip_stats['skipped_no_authors']}{Colors.RESET}")
     print()
     print(f"  {Colors.GREEN}Verified:{Colors.RESET} {found}")
     if mismatched > 0:

@@ -305,6 +305,13 @@
         const spinner = document.getElementById('spinner');
         const errorMessage = document.getElementById('errorMessage');
         const results = document.getElementById('results');
+        const openalexKeyInput = document.getElementById('openalexKey');
+
+        // Load saved OpenAlex API key from localStorage
+        const savedKey = localStorage.getItem('openalexKey');
+        if (savedKey) {
+            openalexKeyInput.value = savedKey;
+        }
 
         function createScholarLink(title) {
             const encoded = encodeURIComponent(title);
@@ -359,6 +366,14 @@
 
             const formData = new FormData(form);
 
+            // Save OpenAlex API key to localStorage
+            const keyValue = openalexKeyInput.value.trim();
+            if (keyValue) {
+                localStorage.setItem('openalexKey', keyValue);
+            } else {
+                localStorage.removeItem('openalexKey');
+            }
+
             // Reset UI
             submitBtn.disabled = true;
             spinner.classList.add('visible');
@@ -386,15 +401,17 @@
 
                 // Update skipped details
                 const skippedDetails = document.getElementById('skippedDetails');
+                const detailParts = [];
                 if (data.summary.skipped > 0) {
-                    const parts = [];
-                    if (data.summary.skipped_url > 0) parts.push(`${data.summary.skipped_url} non-academic URLs`);
-                    if (data.summary.skipped_short_title > 0) parts.push(`${data.summary.skipped_short_title} short titles`);
-                    if (data.summary.skipped_no_authors > 0) parts.push(`${data.summary.skipped_no_authors} missing authors`);
-                    skippedDetails.textContent = `Skipped: ${parts.join(', ')}`;
-                } else {
-                    skippedDetails.textContent = '';
+                    const skipParts = [];
+                    if (data.summary.skipped_url > 0) skipParts.push(`${data.summary.skipped_url} non-academic URLs`);
+                    if (data.summary.skipped_short_title > 0) skipParts.push(`${data.summary.skipped_short_title} short titles`);
+                    detailParts.push(`Skipped: ${skipParts.join(', ')}`);
                 }
+                if (data.summary.title_only > 0) {
+                    detailParts.push(`Title-only (no authors extracted): ${data.summary.title_only}`);
+                }
+                skippedDetails.textContent = detailParts.join(' | ');
 
                 // Render hallucinations
                 const list = document.getElementById('hallucinationList');

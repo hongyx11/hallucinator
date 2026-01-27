@@ -1,6 +1,6 @@
 # Hallucinated Reference Detector
 
-A tool to detect potentially hallucinated or fabricated references in academic PDF papers. It extracts references from PDFs and validates them against academic databases (CrossRef, arXiv, DBLP, OpenReview, and optionally OpenAlex). Available as both a command-line tool and a web interface.
+A tool to detect potentially hallucinated or fabricated references in academic PDF papers. It extracts references from PDFs and validates them against academic databases (CrossRef, arXiv, DBLP, OpenReview, Semantic Scholar, and optionally OpenAlex). Available as both a command-line tool and a web interface.
 
 Created by Gianluca Stringhini with the help of Claude Code and ChatGPT
 
@@ -17,6 +17,7 @@ Created by Gianluca Stringhini with the help of Claude Code and ChatGPT
   - arXiv
   - DBLP
   - OpenReview
+  - Semantic Scholar (aggregates Academia.edu, SSRN, PubMed, and more)
 - Author matching to detect title matches with wrong authors
 - Colored terminal output for easy identification of issues
 - Handles em-dash citations (same authors as previous reference)
@@ -107,7 +108,7 @@ Title:
   Some Fabricated Paper Title That Does Not Exist
 
 Status: Reference not found in any database
-Searched: CrossRef, arXiv, DBLP, OpenReview
+Searched: CrossRef, arXiv, DBLP, OpenReview, Semantic Scholar
 
 ------------------------------------------------------------
 
@@ -131,6 +132,7 @@ SUMMARY
    - arXiv - moderate limits
    - DBLP - more restrictive, queried with configurable delay
    - OpenReview - conference papers (ICLR, NeurIPS, etc.)
+   - Semantic Scholar - aggregates Academia.edu, SSRN, PubMed, and institutional repositories
 6. **Author Matching**: Confirms that found titles have matching authors
 
 ## Skipped References
@@ -141,7 +143,9 @@ Some references are skipped during analysis and not checked against databases. T
 
 - **Short titles**: References with titles shorter than 5 words are skipped. Very short titles are often not academic papers (e.g., software names, dataset titles) and are prone to false matches.
 
-- **Missing authors**: References where author names could not be extracted are skipped, as author verification is not possible.
+## Title-Only Verification
+
+References where author names could not be extracted are still checked against databases, but only by title. These are reported as "title-only" in the summary. If the title is found in a database, it counts as verified (without author confirmation).
 
 ## Limitations
 
