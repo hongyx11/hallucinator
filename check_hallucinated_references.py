@@ -385,8 +385,10 @@ def clean_title(title, from_quotes=False):
     # Fix hyphenation from PDF line breaks (preserves compound words like "human-centered")
     title = fix_hyphenation(title)
 
-    # If title came from quotes, return it as-is (quotes already delimit the title)
+    # If title came from quotes, strip trailing punctuation (IEEE style puts comma inside quotes)
     if from_quotes:
+        title = title.strip()
+        title = re.sub(r'[.,;:]+$', '', title)
         return title.strip()
 
     # For non-quoted titles, truncate at first sentence-ending period
