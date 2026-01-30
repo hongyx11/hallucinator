@@ -1157,7 +1157,8 @@ def query_all_databases_concurrent(title, ref_authors, openalex_key=None, s2_api
                         }
                     else:
                         # Author mismatch - save first one but keep looking
-                        if first_mismatch is None:
+                        # Skip OpenAlex mismatches as they often have false positives
+                        if first_mismatch is None and name != 'OpenAlex':
                             first_mismatch = {
                                 'status': 'author_mismatch',
                                 'source': name,
