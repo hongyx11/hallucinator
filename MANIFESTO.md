@@ -23,8 +23,8 @@ The leaked data was used for:
 - Author-reviewer collusion
 
 Post-incident analysis found:
-- **21% of ICLR reviews** were fully AI-generated
-- **199 submitted papers** were completely AI-generated
+- **21% of ICLR reviews** were likely fully AI-generated
+- **199 submitted papers** were likely completely AI-generated
 - The vulnerability may have been exploited as early as November 11
 
 Sources:
